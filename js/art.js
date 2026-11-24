@@ -49,11 +49,22 @@ window.ART = (function () {
       <ellipse cx="-3" cy="24" rx="9" ry="6" fill="#ff5d8f"/></g></svg>`;
   }
   const BUDDIES = [
-    { id: 'krill', name: 'The Krill', streak: 0, blub: 'blub!' }, { id: 'schooler', name: 'Schooler', streak: 5, blub: 'glub!' },
-    { id: 'rare', name: 'Rare Squid', streak: 14, blub: 'blorp!' }, { id: 'deepcut', name: 'Deep Cut Angler', streak: 30, blub: 'chomp!' },
-    { id: 'evil-krill', name: 'Evil Krill', streak: 45, blub: 'mwahaha!' }, { id: 'hackmanite', name: 'Hackmanite', streak: 60, blub: 'glimmer!' },
-    { id: 'fossil-krill', name: 'Fossil Krill', streak: 75, blub: 'rattle!' }, { id: 'mantis-shrimp', name: 'Mantis Shrimp', streak: 100, blub: 'pow!' },
-    { id: 'leviathan', name: 'Leviathan', streak: 150, blub: 'grrrblub!' }
+    { id: 'krill', name: 'The Krill', streak: 0, blub: 'blub!', color: '#ff5d8f', poke: 'roll', pokeMs: 950 },
+    { id: 'schooler', name: 'Schooler', streak: 5, blub: 'glub!', color: '#4de3ff', poke: 'dart', pokeMs: 900 },
+    { id: 'rare', name: 'Rare Squid', streak: 14, blub: 'blorp!', color: '#ff5252', poke: 'jet', pokeMs: 1050 },
+    { id: 'deepcut', name: 'Deep Cut Angler', streak: 30, blub: 'chomp!', color: '#9d7bff', poke: 'chomp', pokeMs: 950 },
+    { id: 'evil-krill', name: 'Evil Krill', streak: 45, blub: 'mwahaha!', color: '#ff303b', poke: 'roll', pokeMs: 950 },
+    { id: 'hackmanite', name: 'Hackmanite', streak: 60, blub: 'glimmer!', color: '#dfefee', poke: 'roll', pokeMs: 950 },
+    { id: 'fossil-krill', name: 'Fossil Krill', streak: 75, blub: 'rattle!', color: '#e8cfa4', poke: 'roll', pokeMs: 950 },
+    { id: 'mantis-shrimp', name: 'Mantis Shrimp', streak: 100, blub: 'pow!', color: '#ed9359', poke: 'punch', pokeMs: 750 },
+    { id: 'leviathan', name: 'Leviathan', streak: 150, blub: 'grrrblub!', color: '#b4f542', poke: 'roll', pokeMs: 950 }
   ];
-  return { mascot, puffer, BUDDIES };
+  const TIER_ART = {
+    plankton: () => krillBody({ body: '#8fa3c4', belly: '#c3d0e6' }),
+    tooclever: () => krillBody({ body: '#ff9f43', belly: '#ffd2a0', decor: '<path d="M14 30 l10 -22 l10 22z" fill="#ff5d8f"/><circle cx="24" cy="8" r="3" fill="#ffd166"/>' }),
+    schooler: () => fish('#4de3ff'), rare: () => squid('#ff5252'), deepcut: () => angler('#9d7bff'),
+    krillion: () => krillBody({ body: '#ffd166', belly: '#fff0b8', decor: '<path d="M10 24 l6 -14 l8 10 l8 -12 l6 16z" fill="#ffb000" stroke="#7a5200" stroke-width="1.5"/>' })
+  };
+  function tier(id) { return `<svg viewBox="0 0 130 100" xmlns="http://www.w3.org/2000/svg" aria-label="${id}">${(TIER_ART[id] || TIER_ART.plankton)()}</svg>`; }
+  return { mascot, puffer, BUDDIES, tier };
 })();

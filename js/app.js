@@ -49,71 +49,93 @@
   const backLink = (href = '#/', t = '← today’s dive') => `<p class="mt2"><a class="ghost" href="${href}">${t}</a></p>`;
 
   /* ---------- the game ---------- */
-  // opts: {title, cats, onDone(result), subtitle}
+  /* ---------- the dive (stage) ---------- */
+  // opts: {title, cats, onDone(result), meta, links, tagline, subline, accent, autoBegin}
   function playDive(opts) {
-    const cats = opts.cats;
-    let round = 0, total = 0;
-    const results = []; // {tier, score, raw, canon}
-    let timerId = 0, endAt = 0, locked = false;
-    onLeave(() => cancelAnimationFrame(timerId));
+    const cats = opts.cats, ANSWER_MS = KR.SECONDS * 1000, PREVIEW_MS = 3000;
+    const ui = { submit: 'DIVE', begin: '▼ BEGIN DESCENT ▼', descend: 'DESCEND ▼', surface: 'SURFACE ▲', previewPrefix: 'descending · the clock starts in', promptWord: 'PROMPT', hint: '&#9660; rarer answers sink deeper &#9660;', unit: 'm', sinkVerb: 'sink', reject: t => `"${t}": no echo. try again` };
+    app.innerHTML = '<div id="stage"></div>';
+    const stage = Stage.create($('#stage'), { ui, accent: opts.accent, tagline: opts.tagline, subline: opts.subline, character: KR.settings.character, lowPower: KR.settings.lowPower });
+    onLeave(() => stage.destroy());
+    const input = stage.input;
+    let round = 0, total = 0, phase = 'intro', busy = false, raf = 0, previewT = 0, endAt = 0, lastShown = -1;
+    const results = [];
+    const disp = c => KR.titleCase(c); // fallback
+    const howto = ['7 prompts a day. same for everyone.', `${KR.SECONDS} seconds to name one thing.`, 'rare answers score big. obvious ones float.', 'the pick that feels clever? the school thought of it too.', `every point sinks you 10 metres. ${KR.MAX} is the trench.`, 'wrong answer? just try again. a close typo gets a suggestion.'];
+    const links = (opts.links || []).map(l => `<a href="${l.href}">${l.label}</a>`).join('');
+    stage.intro(`<details class="ds-howto"><summary>how to play</summary><ul>${howto.map(x => `<li>${x}</li>`).join('')}</ul></details>
+      <button class="ds-begin-btn" id="beginBtn" type="button">${ui.begin}</button>
+      <div class="ds-intro-meta"><span>${esc(opts.meta || '')}</span><div class="row" style="gap:8px">${links}</div></div>`);
+    stage.setDots(KR.ROUNDS, -1);
+    const begin = () => { stage.sfx.event('begin'); stage.leaveIntro(); startRound(0); };
+    $('#beginBtn').onclick = begin;
+    if (opts.autoBegin) setTimeout(begin, 60);
 
-    function draw() {
-      const depthM = total * 10;
-      setDepth(depthM);
-      const cat = cats[round];
-      app.innerHTML = `
-        <div class="hud"><span>${esc(opts.title || 'dive')} · <b>${round + 1}/${KR.ROUNDS}</b></span><span class="depth">${fmtNum(depthM)} m</span><span>score <b>${total}</b></span></div>
-        <div class="timer" id="timer"><i id="tbar"></i></div>
-        <div class="tiles">${cats.map((_, i) => `<span class="${i < results.length ? 'tilebg-' + (results[i].tier || 'miss') : ''} ${i === round ? 'now' : ''}"></span>`).join('')}</div>
-        <div class="prompt">${esc(cat.text)}</div>
-        <form class="ans" id="form" autocomplete="off"><input id="inp" maxlength="60" placeholder="type your answer…" autofocus spellcheck="false" autocapitalize="off"><button class="btn" type="submit">Dive</button></form>
-        <div class="hint" id="hint">rare answers sink deeper. the obvious ones float.</div>`;
-      const inp = $('#inp'); inp.focus();
-      locked = false;
-      endAt = performance.now() + KR.SECONDS * 1000;
+    function startRound(i) {
+      round = i; phase = 'preview'; busy = false; input.value = ''; lastShown = -1;
+      stage.descendToRound(i, cats[i].text, 2200);
+      const t0 = performance.now();
       const tick = () => {
-        const left = Math.max(0, endAt - performance.now());
-        const bar = $('#tbar'); if (!bar) return;
-        bar.style.transform = `scaleX(${left / (KR.SECONDS * 1000)})`;
-        $('#timer').classList.toggle('low', left < 6000);
-        if (left <= 0) { submit(inp.value, true); return; }
-        timerId = requestAnimationFrame(tick);
+        const left = Math.max(0, PREVIEW_MS - (performance.now() - t0)), n = Math.ceil(left / 1000);
+        if (n !== lastShown) { lastShown = n; stage.showPill(`${ui.previewPrefix} <b>${n}</b>`); }
+        if (left <= 0) { stage.showPill(null); startAnswering(); return; }
+        previewT = requestAnimationFrame(tick);
       };
       tick();
-      $('#form').onsubmit = e => { e.preventDefault(); submit(inp.value, false); };
     }
-    function submit(raw, timeout) {
-      if (locked) return;
-      raw = raw.trim();
-      const cat = cats[round];
-      const g = raw ? KR.grade(cat, raw, KR.settings.corrections) : null;
-      locked = true; cancelAnimationFrame(timerId);
-      const tier = g ? g.tier : null, score = g ? TIERS[tier].score : 0;
-      total += score; results.push({ tier, score, raw, canon: g && g.canon, corrected: g && g.corrected, cat: cat.id });
-      reveal();
+    function startAnswering() {
+      phase = 'answering'; stage.startAnswering(); endAt = performance.now() + ANSWER_MS; stage.setTime(ANSWER_MS, ANSWER_MS); stage.setHot(false);
+      setTimeout(() => input.focus(), 350);
+      const loop = () => {
+        if (phase !== 'answering') return;
+        const left = Math.max(0, endAt - performance.now());
+        stage.setTime(left, ANSWER_MS); stage.setUrgency(1 - left / ANSWER_MS); stage.setHot(left <= 5000);
+        if (left <= 0) { expire(); return; }
+        raf = requestAnimationFrame(loop);
+      };
+      loop();
     }
-    function reveal() {
-      const r = results[round], cat = cats[round], T = r.tier ? TIERS[r.tier] : null;
-      const color = T ? `var(--tier-${T.id})` : 'var(--tier-miss-lit)';
-      const quip = T ? T.blurb : (r.raw ? 'never made it onto the reef.' : 'the clock beat you to it.');
-      const gem = KR.gemOf(cat);
-      setDepth(total * 10);
-      const last = round === KR.ROUNDS - 1;
-      $('.tiles').innerHTML = cats.map((_, i) => `<span class="${i < results.length ? 'tilebg-' + (results[i].tier || 'miss') : ''}"></span>`).join('');
-      $('.ans').outerHTML = `<div class="reveal" style="--tc:${color}">
-        <div class="emoji">${T ? T.emoji : '⬛'}</div>
-        <div class="tn">${T ? T.name : 'miss'}</div>
-        <div class="pts">${T ? '+' + T.score : '+0'}</div>
-        ${r.raw ? `<div class="echo">you said <b>${esc(r.raw)}</b>${r.corrected ? ` → matched <b>${esc(KR.titleCase(r.canon))}</b>` : ''}</div>` : ''}
-        <div class="quip">${quip}</div>
-        ${gem && r.tier !== 'krillion' ? `<div class="gem">🌟 the gem down there: ${esc(gem)}</div>` : ''}
-        <p class="mt"><button class="btn" id="next">${last ? 'surface ▲' : 'next ▼'}</button></p></div>`;
-      $('#hint').textContent = '';
-      const nxt = $('#next'); nxt.focus();
-      nxt.onclick = () => { if (last) finish(); else { round++; draw(); } };
+    function expire() {
+      if (phase !== 'answering') return;
+      const raw = input.value.trim();
+      if (raw) evaluate(raw, true); else finishRound({ tier: null, raw: '', canon: null });
     }
-    function finish() { opts.onDone({ score: total, results }); }
-    draw();
+    function evaluate(raw, timeout) {
+      if (busy) return;
+      const cat = cats[round], lk = KR.lookup(cat, raw);
+      stage.hideReject(); stage.hideCorrection();
+      if (lk && lk.kind === 'exact') return finishRound({ tier: lk.tier, raw, canon: lk.canon, disp: lk.disp });
+      if (lk && lk.kind === 'near') {
+        if (!timeout && KR.settings.corrections) { // suggestion: put the fix into the box, ask to confirm
+          input.value = lk.disp; stage.showCorrection(raw, lk.disp); stage.rejectFx(); input.focus(); input.setSelectionRange(input.value.length, input.value.length); return;
+        }
+        return finishRound({ tier: lk.tier, raw, canon: lk.canon, disp: lk.disp, corrected: true });
+      }
+      if (timeout) return finishRound({ tier: null, raw, canon: null });
+      // just an error — the round goes on
+      stage.showReject(ui.reject(raw)); stage.rejectFx(); if (KR.settings.clearRejected) input.value = '';
+      input.classList.remove('shake'); input.focus();
+    }
+    function finishRound(r) {
+      if (busy) return; busy = true; phase = 'plunge'; cancelAnimationFrame(raf);
+      const T = r.tier ? TIERS[r.tier] : null, score = T ? T.score : 0;
+      total += score; results.push({ tier: r.tier, score, raw: r.raw, canon: r.canon, disp: r.disp, corrected: !!r.corrected, cat: cats[round].id });
+      stage.submitFx();
+      const sub = T ? T.blurb : (r.raw ? 'never made it onto the reef.' : 'the clock beat you to it.');
+      input.blur();
+      stage.plunge({ tier: r.tier, score, answerText: r.disp || r.raw, raw: r.raw, sub, newScore: total, round }, () => {
+        phase = 'landed';
+        const last = round === KR.ROUNDS - 1;
+        stage.showNext(last ? ui.surface : ui.descend, () => { if (phase !== 'landed') return; phase = 'leaving'; stage.hideNext(); if (last) surface(); else startRound(round + 1); });
+      });
+    }
+    function surface() { stage.finale(() => { stage.destroy(); opts.onDone({ score: total, results }); }); }
+
+    stage.dock.addEventListener('submit', e => { e.preventDefault(); const raw = input.value.trim(); if (phase === 'answering' && raw) evaluate(raw, false); });
+    input.addEventListener('input', () => { if (phase !== 'answering') return; stage.hideReject(); stage.hideCorrection(); stage.typeFx(); });
+    const onKey = e => { if (e.key === 'Enter' && phase === 'landed' && !e.repeat && document.activeElement !== input) { e.preventDefault(); stage.nextBtn.click(); } };
+    document.addEventListener('keydown', onKey);
+    onLeave(() => { document.removeEventListener('keydown', onKey); cancelAnimationFrame(raf); cancelAnimationFrame(previewT); });
   }
 
   function shareText(title, score, results, extra) {
@@ -128,7 +150,7 @@
     const band = KR.bandFor(o.score), tc = `var(--tier-${band.tier})`;
     setDepth(o.score * 10);
     const text = shareText(o.title, o.score, o.results);
-    const rows = o.results.map((r, i) => `<div class="r"><span>${i + 1}. ${esc((t => t.length > 44 ? t.slice(0, 43) + '…' : t)(KR.byId[r.cat].text.replace(/^Name (a |an |the )?/i, '')))}</span><b class="${r.tier ? 't-' + r.tier : 't-miss'}">${r.raw ? esc(r.canon ? KR.titleCase(r.canon) : r.raw) : '—'} · ${r.score}</b></div>`).join('');
+    const rows = o.results.map((r, i) => `<div class="r"><span>${i + 1}. ${esc((t => t.length > 44 ? t.slice(0, 43) + '…' : t)(KR.byId[r.cat].text.replace(/^Name (a |an |the )?/i, '')))}</span><b class="${r.tier ? 't-' + r.tier : 't-miss'}">${r.raw ? esc(r.disp || (r.canon ? KR.titleCase(r.canon) : r.raw)) : '—'} · ${r.score}</b></div>`).join('');
     app.innerHTML = `<div class="final center mt" style="--tc:${tc}">
       <div class="kicker">${esc(o.title)} complete</div>
       <div class="score">${o.score}</div>
@@ -148,26 +170,17 @@
     const date = KR.todayET(), n = KR.dayNumber(date), done = store.get('krillion-daily-' + date, null);
     if (done) return dailyDone(date, n, done);
     const streak = KR.currentStreak();
-    app.innerHTML = `<div class="intro">${krillHero()}<h1>one in a krillion.</h1>
-      <p class="tag">seven prompts a day. same for everyone. rare answers sink you deeper.</p>
-      <details class="howto"><summary>how to play</summary><ul>
-        <li>7 prompts a day. same for everyone.</li><li>${KR.SECONDS} seconds to name one thing.</li><li>rare answers score big. obvious ones float.</li>
-        <li>the pick that feels clever? the school thought of it too.</li><li>every point sinks you 10 metres. ${KR.MAX} is the trench.</li><li>one dive per day. no second chances.</li></ul></details>
-      <button class="btn begin" id="begin">▼ BEGIN DESCENT ▼</button>
-      <div class="meta"><span>dive #${n} · streak ${streak}</span><a href="#/archive">ARCHIVE ⟲</a><a href="#/packs">THEMED PACKS</a><a href="#/unlimited">UNLIMITED ∞</a></div></div>`;
-    $('#begin').onclick = () => {
-      app.innerHTML = '<div class="descending">descending…</div>';
-      setTimeout(() => playDive({
-        title: 'dive #' + n, cats: KR.dailyCats(date),
-        onDone: r => {
-          const rec = { score: r.score, results: r.results.map(x => ({ tier: x.tier, score: x.score, raw: x.raw, canon: x.canon, cat: x.cat })) };
-          store.set('krillion-daily-' + date, rec);
-          const s = KR.recordDaily(date, r.score);
-          const nb = ART.BUDDIES.filter(b => b.streak && b.streak === s.streak);
-          dailyDone(date, n, rec, nb.length ? `🎉 new dive buddy unlocked: <b>${nb[0].name}</b>! equip it in Settings.` : '');
-        }
-      }), 450);
-    };
+    playDive({
+      title: 'dive #' + n, cats: KR.dailyCats(date), meta: `dive #${n} · streak ${streak}`,
+      links: [{ href: '#/archive', label: 'ARCHIVE ⟲' }, { href: '#/packs', label: 'THEMED PACKS' }, { href: '#/unlimited', label: 'UNLIMITED ∞' }],
+      onDone: r => {
+        const rec = { score: r.score, results: r.results.map(x => ({ tier: x.tier, score: x.score, raw: x.raw, canon: x.canon, disp: x.disp, cat: x.cat })) };
+        store.set('krillion-daily-' + date, rec);
+        const st = KR.recordDaily(date, r.score);
+        const nb = ART.BUDDIES.filter(b => b.streak && b.streak === st.streak);
+        dailyDone(date, n, rec, nb.length ? `🎉 new dive buddy unlocked: <b>${nb[0].name}</b>! equip it in Settings.` : '');
+      }
+    });
   });
   function dailyDone(date, n, rec, note) {
     const st = KR.stats();
@@ -183,19 +196,17 @@
 
   /* ---------- unlimited ---------- */
   route(/^\/unlimited(\/classic)?$/, () => {
-    app.innerHTML = `<div class="intro">${krillHero()}<h1>the endless dive.</h1><p class="tag">no limits. no streaks. a fresh seven prompts every time you surface.</p>
-      <button class="btn begin" id="begin">▼ DIVE ▼</button><div class="meta"><a href="#/">DAILY DIVE</a><a href="#/packs">THEMED PACKS</a></div></div>`;
-    const start = () => playDive({
-      title: 'endless dive', cats: KR.randomCats(),
+    const start = auto => playDive({
+      title: 'endless dive', cats: KR.randomCats(), autoBegin: auto, meta: 'the endless dive · no limits', tagline: 'the endless dive.', subline: 'no limits. no streaks. fresh prompts every dive.',
+      links: [{ href: '#/', label: 'TODAY’S DIVE' }, { href: '#/packs', label: 'THEMED PACKS' }],
       onDone: r => {
         const s = KR.stats(); s.endless = (s.endless || 0) + 1; store.set('krillion-stats', s);
         const k = store.get('krillion-unlimited', { done: 0, best: 0 }); k.done++; k.best = Math.max(k.best, r.score); store.set('krillion-unlimited', k);
-        finalView({ title: 'endless dive', score: r.score, results: r.results, extraBtns: '<button class="btn pink" id="again">Dive again</button>',
-          footer: backLink('#/', '← daily dive') });
-        $('#again').onclick = start;
+        finalView({ title: 'endless dive', score: r.score, results: r.results, extraBtns: '<button class="btn pink" id="again">NEXT DIVE ∞ ↓</button>', footer: backLink('#/', '← daily dive') });
+        $('#again').onclick = () => start(true);
       }
     });
-    $('#begin').onclick = start;
+    start(false);
   });
 
   /* ---------- archive ---------- */
@@ -205,7 +216,8 @@
       const date = m[1], n = KR.dayNumber(date);
       if (date >= today || n < 1) { location.hash = '#/archive'; return; }
       return playDive({
-        title: 'replay #' + n, cats: KR.dailyCats(date),
+        title: 'replay #' + n, cats: KR.dailyCats(date), meta: `replay #${n} · ${date}`, tagline: 'archive replay.', subline: 'replays don’t extend your streak.',
+        links: [{ href: '#/archive', label: 'ARCHIVE ⟲' }, { href: '#/', label: 'TODAY’S DIVE' }],
         onDone: r => {
           const key = 'krillion-archive-' + date, prev = store.get(key, null);
           if (!prev || r.score > prev.score) store.set(key, { score: r.score, results: r.results.map(x => ({ tier: x.tier, score: x.score })) });
@@ -258,7 +270,8 @@
   route(/^\/pack\/(\w+)\/(\d+)$/, m => {
     const p = PACKS.find(x => x.id === m[1]), n = +m[2]; if (!p || n < 1 || n > 30) { location.hash = '#/packs'; return; }
     playDive({
-      title: p.unit + ' ' + n, cats: KR.packCats(p.id, n),
+      title: p.unit + ' ' + n, cats: KR.packCats(p.id, n), accent: p.c, meta: `${p.unit} ${n} of 30`, tagline: p.name.toLowerCase(), subline: p.desc,
+      links: [{ href: '#/pack/' + p.id, label: 'ALL ' + p.unit.toUpperCase() + 'S' }, { href: '#/packs', label: 'THEMED PACKS' }],
       onDone: r => {
         const prog = store.get('krillion-pack-' + p.id, {});
         if (!prog[n] || r.score > prog[n].score) prog[n] = { score: r.score, tiers: r.results.map(x => x.tier) };
@@ -326,7 +339,7 @@
       <div class="panel">${tog('colorblind', 'High-contrast / colorblind mode', 'Brighter, more distinct tier colours.')}
       ${tog('lowPower', 'Low power mode', 'Turns off bubbles and animations.')}
       ${tog('clearRejected', 'Clear rejected entry', 'Empty the box when an answer isn’t found.')}
-      ${tog('corrections', 'Answer corrections', 'Generous autocorrect for typos and aliases.')}
+      ${tog('corrections', 'Preview answer corrections', 'A close typo shows a suggestion you confirm. Off: close matches count automatically.')}
       ${tog('shareLink', 'Add link to share text', 'Append the site link when sharing results.')}</div>
       <h2 class="mt2">Dive buddy</h2><div class="buddies mt">${ART.BUDDIES.map(b => { const un = st.best >= b.streak; return `<button class="buddy ${un ? '' : 'locked'} ${s.character === b.id ? 'sel' : ''}" data-b="${b.id}" ${un ? '' : 'disabled'}>${ART.mascot(b.id)}${esc(b.name)}<small>${b.streak ? b.streak + '-day streak' : 'Earned'}</small></button>`; }).join('')}</div>
       <h2 class="mt2">Data</h2><div class="panel"><p class="sub">Everything is saved only in this browser.</p><p class="mt"><button class="btn small pink" id="reset">Reset all progress</button></p></div>${backLink()}`;

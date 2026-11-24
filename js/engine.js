@@ -20,7 +20,7 @@ window.KR = (function () {
   const MISS = '⬛', ROUNDS = 7, SECONDS = 25, MAX = 700;
 
   // depth backgrounds (metres → colour)
-  const STOPS = [[0, '#1d5580'], [150, '#123a5e'], [350, '#0b1526'], [800, '#081020'], [1400, '#050a14'], [2600, '#03070f'], [4500, '#02050b'], [7000, '#010307']];
+  const STOPS = [[0, '#1d5580'], [150, '#123a5e'], [350, '#0b1526'], [800, '#081020'], [1400, '#050a14'], [2600, '#03070f'], [5200, '#02050b']];
   const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
   const mix = (a, b, t) => '#' + a.map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, '0')).join('');
   function colorAt(m) {
@@ -34,7 +34,8 @@ window.KR = (function () {
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’'`]/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9+#@% ]+/g, ' ').replace(/\s+/g, ' ').trim();
   const strip = s => { s = norm(s).replace(/^(the|a|an) /, ''); return s; };
   const sing = s => s.replace(/(ies)$/, 'y').replace(/(es)$/, '').replace(/s$/, '');
-  const titleCase = s => s.replace(/\b([a-z])/g, m => m.toUpperCase());
+  const SMALL = new Set(['a', 'an', 'the', 'of', 'and', 'in', 'on', 'at', 'to', 'for', 'vs', 'or', 'de', 'la', 'von', 'van']);
+  const titleCase = s => s.replace(/(^|[\s(\-\/])([a-z0-9][^\s)\-\/]*)/g, (m, pre, w, off) => pre + (off > 0 && SMALL.has(w) ? w : w[0].toUpperCase() + w.slice(1)));
   function lev(a, b, max) {
     if (Math.abs(a.length - b.length) > max) return max + 1;
     const dp = Array.from({ length: a.length + 1 }, (_, i) => [i]);
@@ -54,11 +55,12 @@ window.KR = (function () {
     const tk = {}; Object.keys(KEYMAP).forEach(k => tk[KEYMAP[k]] = k);
     order.forEach(tier => {
       (cat.t[tk[tier]] || '').split(';').filter(Boolean).forEach(entry => {
-        const aliases = entry.split('|').map(strip).filter(Boolean);
-        const canon = aliases[0];
+        const rawAliases = entry.split('|');
+        const aliases = rawAliases.map(strip).filter(Boolean);
+        const canon = aliases[0], disp = titleCase(rawAliases[0].trim());
         aliases.forEach(al => {
-          if (!exact.has(al)) { exact.set(al, { tier, canon, entry }); list.push({ al, tier, canon, entry }); }
-          const s1 = sing(al); if (s1 && !exact.has(s1)) exact.set(s1, { tier, canon, entry });
+          if (!exact.has(al)) { exact.set(al, { tier, canon, entry, disp }); list.push({ al, tier, canon, entry, disp }); }
+          const s1 = sing(al); if (s1 && !exact.has(s1)) exact.set(s1, { tier, canon, entry, disp });
         });
       });
     });
@@ -78,6 +80,23 @@ window.KR = (function () {
         if (d <= max && (d < bd || (d === bd && TIERS[e.tier].score < TIERS[best.tier].score))) { best = e; bd = d; }
       }
       if (best) return { tier: best.tier, canon: best.canon, corrected: true };
+    }
+    return null;
+  }
+  // lookup → {kind:'exact'|'near', tier, canon} | null   (near = very close to a known answer: typo / alias)
+  function lookup(cat, raw) {
+    const q = strip(raw); if (!q) return null;
+    const ix = indexOf(cat);
+    const m = ix.exact.get(q) || ix.exact.get(sing(q)) || ix.exact.get(q + 's');
+    if (m) return { kind: 'exact', tier: m.tier, canon: m.canon, disp: m.disp };
+    if (q.length >= 4) {
+      const max = q.length >= 9 ? 2 : 1;
+      let best = null, bd = 99;
+      for (const e of ix.list) {
+        const d = lev(q, e.al, max);
+        if (d <= max && (d < bd || (d === bd && TIERS[e.tier].score < TIERS[best.tier].score))) { best = e; bd = d; }
+      }
+      if (best) return { kind: 'near', tier: best.tier, canon: best.canon, disp: best.disp };
     }
     return null;
   }
@@ -139,6 +158,6 @@ window.KR = (function () {
     store.set('krillion-stats', s); return s;
   }
 
-  return { TIERS, BANDS, bandFor, MISS, ROUNDS, SECONDS, MAX, colorAt, norm, strip, titleCase, grade, allAnswers, gemOf, byId, hash, rng, pick, poolOf, dailyCats, packCats, randomCats,
+  return { TIERS, BANDS, bandFor, MISS, ROUNDS, SECONDS, MAX, colorAt, norm, strip, titleCase, grade, lookup, allAnswers, gemOf, byId, hash, rng, pick, poolOf, dailyCats, packCats, randomCats,
     todayET, dayNumber, dateFromNumber, yesterday, secondsToReset, fmtCountdown, store, get settings() { return settings; }, saveSettings, stats, currentStreak, recordDaily };
 })();
